@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Convertisseur Mue</title>
+<meta name="description" content="Convertissez images, tableurs, documents, PDF, audio et données directement sur votre appareil. Aucun fichier n'est envoyé.">
+<meta name="theme-color" content="#F1F2EC" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121411" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Mue">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="format-detection" content="telephone=no">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="icons/icon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"><i></i><i></i></span>
+      <span class="name">Mue</span>
+    </div>
+    <p class="promise"><span class="dot" aria-hidden="true"></span>Converti sur votre appareil. Aucun fichier envoyé.</p>
+    <button type="button" class="btn ghost install" id="install" hidden>Installer l'appli</button>
+  </header>
+
+  <main>
+    <div class="intro">
+      <h1>Changez le format de n'importe quel fichier.</h1>
+      <p class="lede">Images, tableurs, PDF, Word, Markdown, JSON, YAML, audio et vidéo. Ajoutez, choisissez le format, récupérez.</p>
+    </div>
+
+    <label class="drop" id="drop" for="picker">
+      <input type="file" id="picker" multiple>
+      <span class="drop-title only-pointer">Déposez vos fichiers ici</span>
+      <span class="drop-title only-touch">Ajouter des fichiers</span>
+      <span class="drop-sub only-pointer">ou <u>parcourez votre ordinateur</u> · plusieurs fichiers acceptés · Ctrl+V pour coller une image</span>
+      <span class="drop-sub only-touch">Photos, documents, musique… plusieurs à la fois.</span>
+      <span class="drop-btn only-touch" aria-hidden="true">Choisir des fichiers</span>
+      <span class="drop-exts" id="dropExts"></span>
+    </label>
+
+    <section class="queue" aria-labelledby="queueTitle">
+      <div class="queue-head">
+        <h2 id="queueTitle">File d'attente <span class="count" id="count">0</span></h2>
+        <div class="queue-actions" id="dock">
+          <button type="button" class="btn ghost" id="clearAll">Vider</button>
+          <button type="button" class="btn ghost" id="zipAll" disabled>Tout en .zip</button>
+          <button type="button" class="btn primary" id="convertAll">Tout convertir</button>
+        </div>
+      </div>
+
+      <details class="opts" id="opts">
+        <summary>Réglages images</summary>
+        <div class="opts-grid">
+          <div class="field">
+            <label for="quality">Qualité JPG / WEBP <output id="qualityOut">90 %</output></label>
+            <input type="range" id="quality" min="40" max="100" value="90">
+          </div>
+          <div class="field">
+            <label for="maxW">Largeur maximale (px)</label>
+            <input type="number" id="maxW" min="16" max="10000" inputmode="numeric" placeholder="Taille d'origine">
+          </div>
+          <div class="field">
+            <label for="pdfScale">Résolution PDF → image</label>
+            <select id="pdfScale">
+              <option value="1">Écran (72 dpi)</option>
+              <option value="2" selected>Nette (144 dpi)</option>
+              <option value="3">Impression (216 dpi)</option>
+            </select>
+          </div>
+        </div>
+      </details>
+
+      <ul class="jobs" id="jobs"></ul>
+      <p class="empty" id="empty" hidden>Aucun fichier pour l'instant. Ajoutez-en un au-dessus pour commencer.</p>
+    </section>
+
+    <section class="formats" aria-labelledby="fmtTitle">
+      <h2 id="fmtTitle">Conversions disponibles</h2>
+      <p class="note">Tout fichier peut aussi être encodé en Base64 (.txt).</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Type</th><th>Entrée</th><th>Sortie</th></tr></thead>
+          <tbody id="fmtTable"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p>Les outils de conversion se chargent au premier usage, puis restent disponibles hors connexion une fois l'appli installée. HEIC, TIFF et l'export MP3 ne sont pas pris en charge par les navigateurs.</p>
+    <p class="ios-hint" id="iosHint" hidden>Sur iPhone et iPad : touchez Partager, puis « Sur l'écran d'accueil » pour installer Mue.</p>
+  </footer>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
