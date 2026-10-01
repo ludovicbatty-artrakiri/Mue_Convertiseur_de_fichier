@@ -4,49 +4,52 @@
   "use strict";
 
   // ---------- Bibliothèques (chargées uniquement si besoin) ----------
-  const CDN = "https://cdn.jsdelivr.net/npm/";
+  const CDN = window.MUE_CDN || "https://cdn.jsdelivr.net/npm/";
   const LIBS = {
     xlsx: { url: CDN + "xlsx@0.18.5/dist/xlsx.full.min.js", global: "XLSX" },
     jspdf: { url: CDN + "jspdf@2.5.1/dist/jspdf.umd.min.js", global: "jspdf" },
+    html2canvas: { url: CDN + "html2canvas@1.4.1/dist/html2canvas.min.js", global: "html2canvas" },
     pdfworker: { url: CDN + "pdfjs-dist@3.11.174/build/pdf.worker.min.js", global: "pdfjsWorker" },
-    pdfjs: { url: CDN + "pdfjs-dist@3.11.174/build/pdf.min.js", global: "pdfjsLib" },
+    pdfjs: { url: CDN + "pdfjs-dist@3.11.174/build/pdf.min.js", global: "pdfjsLib", deps: ["pdfworker"] },
     marked: { url: CDN + "marked@12.0.2/marked.min.js", global: "marked" },
     turndown: { url: CDN + "turndown@7.1.2/lib/turndown.browser.umd.js", global: "TurndownService" },
+    gfm: { url: CDN + "turndown-plugin-gfm@1.0.2/dist/turndown-plugin-gfm.js", global: "turndownPluginGfm" },
     mammoth: { url: CDN + "mammoth@1.6.0/mammoth.browser.min.js", global: "mammoth" },
     yaml: { url: CDN + "js-yaml@4.1.0/dist/js-yaml.min.js", global: "jsyaml" },
     jszip: { url: CDN + "jszip@3.10.1/dist/jszip.min.js", global: "JSZip" },
+    docx: { url: CDN + "docx-preview@0.3.6/dist/docx-preview.min.js", global: "docx", deps: ["jszip"] },
   };
   const loading = {};
   function lib(name) {
     const L = LIBS[name];
     if (window[L.global]) return Promise.resolve(window[L.global]);
     if (!loading[name]) {
-      loading[name] = new Promise((resolve, reject) => {
+      loading[name] = Promise.all((L.deps || []).map(lib)).then(() => new Promise((resolve, reject) => {
         const s = document.createElement("script");
         s.src = L.url;
         s.async = true;
-        s.onload = () => (window[L.global] ? resolve(window[L.global]) : reject(new Error("Bibliothèque " + name + " introuvable")));
-        s.onerror = () => { delete loading[name]; reject(new Error("Impossible de charger " + name + ". Vérifiez votre connexion.")); };
+        s.onload = () => (window[L.global] ? resolve(window[L.global]) : reject(new Error("Outil " + name + " introuvable.")));
+        s.onerror = () => { delete loading[name]; reject(new Error("Impossible de charger l'outil de conversion. Vérifiez votre connexion.")); };
         document.head.appendChild(s);
-      });
+      }));
     }
     return loading[name];
   }
   async function pdfjs() {
-    await lib("pdfworker"); // exécuté dans la page : pas besoin de Worker séparé
-    const p = await lib("pdfjs");
+    const p = await lib("pdfjs"); // le worker est chargé dans la page : pas de Worker séparé
     p.GlobalWorkerOptions.workerSrc = LIBS.pdfworker.url;
     return p;
   }
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // ---------- Formats ----------
   const GROUPS = [
-    { id: "image", label: "Image", in: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg", "ico", "avif"], out: ["png", "jpg", "webp", "bmp", "ico", "pdf"] },
-    { id: "sheet", label: "Tableur", in: ["csv", "tsv", "xlsx", "xls", "xlsm", "ods"], out: ["xlsx", "csv", "tsv", "ods", "json", "html", "md", "xml"] },
+    { id: "image", label: "Image", in: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg", "ico", "avif"], out: ["png", "jpg", "webp", "pdf", "bmp", "ico"] },
+    { id: "sheet", label: "Tableur", in: ["csv", "tsv", "xlsx", "xls", "xlsm", "ods"], out: ["xlsx", "pdf", "csv", "ods", "tsv", "json", "html", "md", "xml"] },
     { id: "pdf", label: "PDF", in: ["pdf"], out: ["png", "jpg", "txt"] },
-    { id: "docx", label: "Word", in: ["docx"], out: ["html", "md", "txt", "pdf"] },
-    { id: "markdown", label: "Markdown", in: ["md", "markdown"], out: ["html", "txt", "pdf"] },
-    { id: "html", label: "HTML", in: ["html", "htm"], out: ["md", "txt", "pdf"] },
+    { id: "docx", label: "Word", in: ["docx"], out: ["pdf", "html", "md", "txt"] },
+    { id: "markdown", label: "Markdown", in: ["md", "markdown"], out: ["html", "pdf", "txt"] },
+    { id: "html", label: "HTML", in: ["html", "htm"], out: ["pdf", "md", "txt"] },
     { id: "text", label: "Texte", in: ["txt", "log", "ini", "cfg", "conf", "js", "ts", "css", "py", "java", "c", "cpp", "sql", "sh", "php", "rb", "go", "rs"], out: ["pdf", "html", "md"] },
     { id: "json", label: "JSON", in: ["json"], out: ["yaml", "xml", "csv", "xlsx", "md"] },
     { id: "yaml", label: "YAML", in: ["yaml", "yml"], out: ["json", "xml"] },
@@ -98,63 +101,359 @@
     pdfScale: Number($("pdfScale").value) || 2,
   });
 
-  // ---------- Outils communs ----------
-  function htmlDoc(title, body, extraCss) {
-    return `<!doctype html>\n<html lang="fr">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<title>${esc(title)}</title>\n<style>body{font:16px/1.6 system-ui,sans-serif;max-width:46rem;margin:2rem auto;padding:0 1rem;color:#1b1b1b}img{max-width:100%}pre{background:#f4f4f4;padding:1rem;overflow:auto}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:.35rem .6rem}${extraCss || ""}</style>\n</head>\n<body>\n${body}\n</body>\n</html>\n`;
+  // ---------- Documents HTML produits ----------
+  const DOC_CSS = `
+html{background:#fff}
+body{margin:0;padding:48px 56px;color:#1f2328;font:15px/1.6 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;word-wrap:break-word}
+h1,h2,h3,h4,h5,h6{margin:1.4em 0 .6em;line-height:1.25;font-weight:600}
+h1{font-size:2em;padding-bottom:.3em;border-bottom:1px solid #d1d9e0}
+h2{font-size:1.5em;padding-bottom:.3em;border-bottom:1px solid #d1d9e0}
+h3{font-size:1.25em}h4{font-size:1em}
+body>:first-child{margin-top:0}
+p,ul,ol,blockquote,pre,table{margin:0 0 1em}
+ul,ol{padding-left:2em}li+li{margin-top:.25em}
+a{color:#0969da}
+blockquote{margin-left:0;padding:0 1em;color:#59636e;border-left:.25em solid #d1d9e0}
+code{font:.875em/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#eff1f3;padding:.2em .4em;border-radius:4px}
+pre{background:#f6f8fa;padding:14px 16px;border-radius:6px;overflow:auto}
+pre code{background:none;padding:0;font-size:13px;white-space:pre-wrap}
+table{border-collapse:collapse;display:table;max-width:100%}
+th,td{border:1px solid #d1d9e0;padding:6px 12px;vertical-align:top}
+th{background:#f6f8fa;font-weight:600}
+tr:nth-child(2n) td{background:#fbfcfd}
+img{max-width:100%;height:auto}
+hr{border:0;border-top:1px solid #d1d9e0;margin:1.5em 0}`;
+  function htmlDoc(title, body, css) {
+    return `<!doctype html>\n<html lang="fr">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<title>${esc(title)}</title>\n<style>${css == null ? DOC_CSS : css}</style>\n</head>\n<body>\n${body}\n</body>\n</html>\n`;
   }
+  const TEXT_CSS = `html{background:#fff}body{margin:0;padding:48px 56px;color:#1b1b1b}pre{margin:0;font:12.5px/1.55 ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;white-space:pre-wrap;word-wrap:break-word;tab-size:4}`;
+  const SHEET_CSS = `html{background:#fff}body{margin:0;padding:40px 44px;color:#1b1b1b;font:12px/1.4 Calibri,Carlito,"Segoe UI",Arial,sans-serif}
+h2{font-size:15px;margin:22px 0 8px}h2:first-child{margin-top:0}
+table{border-collapse:collapse;margin-bottom:18px}
+td,th{border:1px solid #c8ccd0;padding:3px 7px;white-space:nowrap;vertical-align:bottom}
+tr:first-child td{background:#f2f4f5;font-weight:600}
+td[data-t="n"]{text-align:right;font-variant-numeric:tabular-nums}`;
+
   function htmlToText(html) {
     const doc = new DOMParser().parseFromString(html, "text/html");
-    doc.querySelectorAll("script,style,noscript").forEach((n) => n.remove());
+    doc.querySelectorAll("script,style,noscript,template").forEach((n) => n.remove());
     doc.querySelectorAll("br").forEach((n) => n.replaceWith("\n"));
-    doc.querySelectorAll("p,div,section,article,header,footer,li,tr,h1,h2,h3,h4,h5,h6,blockquote,pre,table,ul,ol").forEach((n) => n.append("\n"));
-    doc.querySelectorAll("li").forEach((n) => n.prepend("• "));
-    doc.querySelectorAll("td,th").forEach((n) => n.append("\t"));
-    return (doc.body ? doc.body.textContent : "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
+    doc.querySelectorAll("li").forEach((n) => n.prepend(n.parentElement && n.parentElement.tagName === "OL" ? [...n.parentElement.children].indexOf(n) + 1 + ". " : "• "));
+    doc.querySelectorAll("td,th").forEach((n) => { if (n.nextElementSibling) n.append("\t"); });
+    doc.querySelectorAll("p,div,section,article,header,footer,li,tr,h1,h2,h3,h4,h5,h6,blockquote,pre,table,ul,ol,dt,dd,figure,hr").forEach((n) => n.append("\n"));
+    doc.querySelectorAll("p,h1,h2,h3,h4,h5,h6,table,ul,ol,blockquote,pre").forEach((n) => n.append("\n"));
+    return (doc.body ? doc.body.textContent : "").replace(/ /g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
   }
   async function htmlToMd(html) {
-    const T = await lib("turndown");
-    const td = new T({ headingStyle: "atx", codeBlockStyle: "fenced", bulletListMarker: "-" });
-    td.remove(["script", "style"]);
-    return td.turndown(html);
+    const [T, G] = await Promise.all([lib("turndown"), lib("gfm")]);
+    const td = new T({ headingStyle: "atx", codeBlockStyle: "fenced", bulletListMarker: "-", emDelimiter: "*" });
+    td.use(G.gfm);
+    td.remove(["script", "style", "noscript", "title"]);
+    // Tableaux sans ligne d'en-tête : la première ligne devient l'en-tête pour rester un vrai tableau Markdown
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    doc.querySelectorAll("table").forEach((t) => {
+      if (t.querySelector("th")) return;
+      const first = t.querySelector("tr");
+      if (!first) return;
+      first.querySelectorAll("td").forEach((td0) => { const th = doc.createElement("th"); th.innerHTML = td0.innerHTML; td0.replaceWith(th); });
+    });
+    doc.querySelectorAll("td p, th p").forEach((p) => { p.insertAdjacentText("afterend", " "); p.replaceWith(...p.childNodes); });
+    return td.turndown(doc.body ? doc.body.innerHTML : html).trim() + "\n";
   }
-  async function textToPdf(text, title) {
-    const { jsPDF } = await lib("jspdf");
-    const doc = new jsPDF({ unit: "pt", format: "a4" });
-    const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 56, LH = 15;
-    doc.setProperties({ title: title || "" });
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(11);
-    // jsPDF (police standard) ne gère que le Latin-1 : on remplace le reste.
-    const clean = text.replace(/\t/g, "    ").replace(/[‘’]/g, "'").replace(/[“”«»]/g, '"').replace(/[–—]/g, "-").replace(/…/g, "...").replace(/•/g, "-").replace(/[^\x00-\xFF\n]/g, "?");
-    const lines = doc.splitTextToSize(clean, W - 2 * M);
-    let y = M;
-    for (const line of lines) {
-      if (y > H - M) { doc.addPage(); y = M; }
-      doc.text(line, M, y);
-      y += LH;
+
+  // ---------- Rendu fidèle en PDF ----------
+  // Le document est mis en page par le navigateur (polices, tableaux, images, couleurs),
+  // puis découpé en pages A4 entre deux lignes, jamais au milieu d'une ligne ou d'une image.
+  const A4_W = 794, A4_H = 1123; // en px CSS (96 dpi)
+  const stripScripts = (h) => h.replace(/<script\b[\s\S]*?<\/script\s*>/gi, "").replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "");
+
+  async function makeFrame(html, width) {
+    const f = document.createElement("iframe");
+    f.setAttribute("aria-hidden", "true");
+    f.tabIndex = -1;
+    f.style.cssText = `position:fixed;left:-20000px;top:0;width:${width}px;height:${A4_H}px;border:0;pointer-events:none;`;
+    document.body.appendChild(f);
+    const d = f.contentDocument;
+    d.open(); d.write(html); d.close();
+    await settle(d);
+    return f;
+  }
+  async function settle(d) {
+    try { if (d.fonts && d.fonts.ready) await Promise.race([d.fonts.ready, sleep(4000)]); } catch (e) {}
+    const imgs = [...d.images].filter((i) => !i.complete);
+    if (imgs.length) await Promise.race([Promise.all(imgs.map((i) => new Promise((r) => { i.onload = i.onerror = r; }))), sleep(8000)]);
+    await sleep(60);
+  }
+  // Zones qu'on ne doit pas couper : chaque ligne de texte, chaque image, chaque ligne de tableau
+  function keepTogether(d, root, originY) {
+    const iv = [];
+    const range = d.createRange();
+    const walker = d.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let n;
+    while ((n = walker.nextNode())) {
+      if (!n.nodeValue.trim()) continue;
+      range.selectNodeContents(n);
+      for (const r of range.getClientRects()) if (r.height > 0 && r.width > 0) iv.push([r.top - originY, r.bottom - originY]);
     }
-    return doc.output("blob");
+    root.querySelectorAll("img,svg,canvas,video,tr,hr,math").forEach((el) => {
+      const r = el.getBoundingClientRect();
+      if (r.height > 0) iv.push([r.top - originY, r.bottom - originY]);
+    });
+    return iv;
   }
+  function forcedBreaks(d, root, originY) {
+    const out = [];
+    const win = d.defaultView;
+    root.querySelectorAll("*").forEach((el) => {
+      const s = win.getComputedStyle(el);
+      const r = el.getBoundingClientRect();
+      if (s.breakBefore === "page" || s.pageBreakBefore === "always") out.push(r.top - originY);
+      if (s.breakAfter === "page" || s.pageBreakAfter === "always") out.push(r.bottom - originY);
+    });
+    return out.sort((a, b) => a - b);
+  }
+  // Renvoie les tranches [début, fin] de chaque page ; heightFor(i) = hauteur utile de la page i
+  function slicePages(total, heightFor, iv, forced) {
+    const cands = [...new Set(iv.flat().map((v) => Math.round(v * 2) / 2))].sort((a, b) => a - b);
+    const cuts = [];
+    let top = 0;
+    for (let i = 0; i < 2000; i++) {
+      const H = heightFor(i);
+      const limit = top + H;
+      const f = forced.find((y) => y > top + 8 && y < Math.min(limit, total - 4));
+      if (f != null) { cuts.push([top, f]); top = f; continue; }
+      if (total - top <= H + 1) break;
+      let cut = limit;
+      let j = cands.length - 1;
+      while (j >= 0 && cands[j] > limit) j--;
+      for (; j >= 0 && cands[j] > top + H * 0.3; j--) {
+        const y = cands[j];
+        if (!iv.some(([a, b]) => a < y - 0.75 && b > y + 0.75)) { cut = y; break; }
+      }
+      cuts.push([top, cut]);
+      top = cut;
+    }
+    cuts.push([top, total]);
+    return cuts.filter(([a, b]) => b - a > 0.5);
+  }
+  function bgOf(d) {
+    const win = d.defaultView;
+    for (const el of [d.body, d.documentElement]) {
+      if (!el) continue;
+      const c = win.getComputedStyle(el).backgroundColor;
+      if (c && !/rgba\(0, 0, 0, 0\)|transparent/.test(c)) return c;
+    }
+    return "#ffffff";
+  }
+  function rgbOf(css) {
+    const m = /rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)/.exec(css);
+    return m ? [+m[1], +m[2], +m[3]] : [255, 255, 255];
+  }
+  // Prépare un « appareil photo » : une seule capture si le document est raisonnable, sinon page par page
+  async function camera(d, W, total, bg) {
+    const h2c = await lib("html2canvas");
+    const scale = Math.min(2, window.devicePixelRatio > 1 ? 2 : 2);
+    const base = { windowWidth: W, windowHeight: Math.max(total, 1), scrollX: 0, scrollY: 0, scale, backgroundColor: bg, useCORS: true, logging: false, imageTimeout: 8000 };
+    let full = null;
+    if (total * scale <= 16000 && W * total * scale * scale <= 140e6) {
+      full = await h2c(d.documentElement, { ...base, x: 0, y: 0, width: W, height: total });
+    }
+    return async (x, y, w, h) => {
+      if (full) {
+        const c = document.createElement("canvas");
+        c.width = Math.max(1, Math.round(w * scale)); c.height = Math.max(1, Math.round(h * scale));
+        const ctx = c.getContext("2d");
+        ctx.fillStyle = bg; ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(full, x * scale, y * scale, w * scale, h * scale, 0, 0, c.width, c.height);
+        return c;
+      }
+      return h2c(d.documentElement, { ...base, x, y, width: w, height: h });
+    };
+  }
+  async function newPdf(w, h, title) {
+    const { jsPDF } = await lib("jspdf");
+    const pdf = new jsPDF({ unit: "px", format: [w, h], orientation: w > h ? "l" : "p", hotfixes: ["px_scaling"], compress: true });
+    pdf.setProperties({ title: title || "", creator: "Mue" });
+    return pdf;
+  }
+  const addPage = (pdf, i, w, h) => { if (i > 0) pdf.addPage([w, h], w > h ? "l" : "p"); };
+  const putImage = (pdf, canvas, x, y, w, h) => pdf.addImage(canvas.toDataURL("image/jpeg", 0.86), "JPEG", x, y, w, h, undefined, "FAST");
+
+  // Document « coulant » (HTML, Markdown, texte, tableur) → pages A4
+  async function flowToPdf(html, title) {
+    const f = await makeFrame(stripScripts(html), A4_W);
+    try {
+      const d = f.contentDocument, root = d.documentElement;
+      let W = Math.max(A4_W, Math.ceil(root.scrollWidth), d.body ? Math.ceil(d.body.scrollWidth) : 0);
+      if (W > A4_W) { f.style.width = W + "px"; await sleep(40); W = Math.max(W, Math.ceil(root.scrollWidth)); }
+      // Hauteur réelle du contenu, mesurée avec une fenêtre basse (sinon la hauteur d'écran crée une page vide)
+      f.style.height = "200px";
+      await sleep(40);
+      const total = Math.ceil(Math.max(root.scrollHeight, d.body ? d.body.scrollHeight : 0));
+      f.style.height = total + "px";
+      await sleep(40);
+      const pageH = Math.round(W * A4_H / A4_W);
+      const M = Math.round(W * 36 / A4_W);
+      const bg = bgOf(d);
+      const iv = keepTogether(d, d.body || root, 0);
+      const slices = slicePages(total, () => pageH - 2 * M, iv, forcedBreaks(d, d.body || root, 0))
+        .filter(([a, b], i) => i === 0 || iv.some(([t, u]) => u > a + 1 && t < b - 1)); // pas de page blanche finale
+      const shoot = await camera(d, W, total, bg);
+      const pdf = await newPdf(W, pageH, title);
+      const [r, g, b] = rgbOf(bg);
+      for (let i = 0; i < slices.length; i++) {
+        const [s0, s1] = slices[i];
+        addPage(pdf, i, W, pageH);
+        if (r + g + b < 762) { pdf.setFillColor(r, g, b); pdf.rect(0, 0, W, pageH, "F"); }
+        putImage(pdf, await shoot(0, s0, W, s1 - s0), 0, M, W, s1 - s0);
+      }
+      return pdf.output("blob");
+    } finally { f.remove(); }
+  }
+
+  // Word : rendu page par page avec les marges, en-têtes, pieds de page et sauts de page du document
+  const OFFICE_FONTS = [
+    [/Calibri( Light)?|Aptos[\w ]*/i, "Carlito, 'Segoe UI', Arial, sans-serif"],
+    [/Cambria/i, "Caladea, Georgia, serif"],
+    [/Arial|Helvetica/i, "Arimo, 'Liberation Sans', Helvetica, sans-serif"],
+    [/Times New Roman|Times/i, "Tinos, 'Liberation Serif', 'Times New Roman', serif"],
+    [/Courier New|Courier/i, "Cousine, 'Liberation Mono', monospace"],
+    [/Georgia/i, "Gelasio, Georgia, serif"],
+  ];
+  function withFallback(family) {
+    return family.split(",").map((f) => f.trim()).filter(Boolean).flatMap((f) => {
+      const clean = f.replace(/["']/g, "");
+      const hit = OFFICE_FONTS.find(([re]) => re.test(clean));
+      return hit ? [f, hit[1]] : [f];
+    }).join(", ");
+  }
+  // Puces Word dessinées avec les polices Symbol / Wingdings : converties en caractères Unicode
+  const PUA_BULLETS = { "\uf0b7": "•", "\uf0a7": "▪", "\uf0a8": "□", "\uf0d8": "➢", "\uf0fc": "✓", "\uf076": "❖", "\uf06e": "■", "\uf06c": "●", "\uf0e0": "➔", "\uf0f0": "⇨", "\uf02d": "–", "\uf0be": "—" };
+  function fixOfficeFonts(d) {
+    d.querySelectorAll("style").forEach((s) => {
+      s.textContent = s.textContent
+        .replace(/[\uf000-\uf0ff]/g, (c) => PUA_BULLETS[c] || "•")
+        .replace(/font-family:\s*["']?(Symbol|Wingdings[\w ]*)["']?\s*;/gi, "font-family: 'Segoe UI Symbol', 'DejaVu Sans', Arial, sans-serif;")
+        .replace(/font-family:\s*([^;}]+)/gi, (m, fam) => "font-family: " + withFallback(fam));
+    });
+    d.querySelectorAll("[style*='font-family']").forEach((el) => { el.style.fontFamily = withFallback(el.style.fontFamily); });
+  }
+  const FONT_LINKS = ["Carlito:ital,wght@0,400;0,700;1,400;1,700", "Caladea:ital,wght@0,400;0,700;1,400;1,700", "Arimo:ital,wght@0,400;0,700;1,400;1,700", "Tinos:ital,wght@0,400;0,700;1,400;1,700", "Cousine:ital,wght@0,400;0,700;1,400;1,700", "Gelasio:ital,wght@0,400;0,700;1,400;1,700"]
+    .map((f) => `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=${f}&display=block">`).join("");
+
+  async function renderDocx(buf, wrapper, title) {
+    const D = await lib("docx");
+    const f = await makeFrame(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title || "")}</title>${FONT_LINKS}</head><body style="margin:0;background:#fff"></body></html>`, 1200);
+    const d = f.contentDocument;
+    try {
+      await D.renderAsync(buf, d.body, d.head, {
+        inWrapper: wrapper, className: "docx", breakPages: true, ignoreLastRenderedPageBreak: false,
+        ignoreWidth: false, ignoreHeight: false, ignoreFonts: false, experimental: true,
+        useBase64URL: true, renderHeaders: true, renderFooters: true, renderFootnotes: true, renderEndnotes: true,
+        renderChanges: false, renderComments: false,
+      });
+    } catch (e) { f.remove(); throw new Error("Document Word illisible."); }
+    fixOfficeFonts(d);
+    if (!wrapper) {
+      const st = d.createElement("style");
+      st.textContent = "section.docx{margin:0 0 24px!important;box-shadow:none!important}";
+      d.head.appendChild(st);
+    }
+    await settle(d);
+    return f;
+  }
+  const ptToPx = (v) => { const m = /([\d.]+)\s*(pt|px)/.exec(v || ""); return m ? (m[2] === "pt" ? parseFloat(m[1]) * 96 / 72 : parseFloat(m[1])) : 0; };
+
+  async function docxToPdf(buf, title) {
+    const f = await renderDocx(buf, false, title);
+    try {
+      const d = f.contentDocument, root = d.documentElement;
+      const sections = [...d.querySelectorAll("section.docx")];
+      if (!sections.length) throw new Error("Aucune page trouvée dans ce document.");
+      const total = Math.ceil(root.scrollHeight);
+      f.style.height = total + "px";
+      await sleep(40);
+      const W = Math.ceil(Math.max(root.scrollWidth, ...sections.map((s) => s.getBoundingClientRect().right)));
+      f.style.width = W + "px";
+      await sleep(40);
+      const shoot = await camera(d, W, total, "#ffffff");
+      let pdf = null, n = 0;
+      for (const s of sections) {
+        const r = s.getBoundingClientRect();
+        const cs = d.defaultView.getComputedStyle(s);
+        const pw = Math.round(r.width);
+        const ph = Math.round(ptToPx(s.style.minHeight) || ptToPx(cs.minHeight) || r.height);
+        const padT = parseFloat(cs.paddingTop) || 0, padB = parseFloat(cs.paddingBottom) || 0;
+        const art = s.querySelector(":scope > article");
+        if (r.height <= ph + 2 || !art) {
+          // Page normale : capturée telle quelle
+          if (!pdf) pdf = await newPdf(pw, ph, title); else addPage(pdf, n, pw, ph);
+          n++;
+          putImage(pdf, await shoot(r.left, r.top, pw, Math.min(r.height, ph)), 0, 0, pw, Math.min(r.height, ph));
+          continue;
+        }
+        // Section plus longue qu'une page (fichier jamais paginé par Word) : on la découpe entre deux lignes
+        // et on répète l'en-tête et le pied de page sur chaque page, aux mêmes positions.
+        const ar = art.getBoundingClientRect();
+        const ftr = s.querySelector(":scope > footer");
+        const fr = ftr ? ftr.getBoundingClientRect() : null;
+        const fmb = ftr ? parseFloat(d.defaultView.getComputedStyle(ftr).marginBottom) || 0 : 0;
+        const usable = Math.max(100, ph - padT - padB);
+        const slices = slicePages(ar.height, () => usable, keepTogether(d, art, ar.top), forcedBreaks(d, art, ar.top));
+        const head = padT > 0 ? await shoot(r.left, r.top, pw, padT) : null;
+        const foot = fr && fr.height > 0 ? await shoot(r.left, fr.top, pw, fr.height) : null;
+        for (const [s0, s1] of slices) {
+          if (!pdf) pdf = await newPdf(pw, ph, title); else addPage(pdf, n, pw, ph);
+          n++;
+          if (head) putImage(pdf, head, 0, 0, pw, padT);
+          putImage(pdf, await shoot(r.left, ar.top + s0, pw, s1 - s0), 0, padT, pw, s1 - s0);
+          if (foot) putImage(pdf, foot, 0, ph - padB - fmb - fr.height, pw, fr.height);
+        }
+      }
+      return pdf.output("blob");
+    } finally { f.remove(); }
+  }
+  async function docxToHtml(buf, title) {
+    const f = await renderDocx(buf, true, title);
+    try {
+      const d = f.contentDocument;
+      const st = d.createElement("style");
+      st.textContent = "body{margin:0}.docx-wrapper{min-height:100vh}@media (max-width:860px){.docx-wrapper{padding:12px!important}.docx-wrapper>section.docx{transform-origin:top left}}";
+      d.head.appendChild(st);
+      return "<!doctype html>\n" + d.documentElement.outerHTML;
+    } finally { f.remove(); }
+  }
+
+  // ---------- Données ----------
   function rowsToMd(rows) {
+    rows = rows.filter((r) => r.some((v) => v !== "" && v != null));
     if (!rows.length) return "";
     const w = Math.max(...rows.map((r) => r.length));
-    const cell = (v) => String(v == null ? "" : v).replace(/\|/g, "\\|").replace(/\n/g, " ");
+    const cell = (v) => String(v == null ? "" : v).replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
     const line = (r) => "| " + Array.from({ length: w }, (_, i) => cell(r[i])).join(" | ") + " |";
-    return [line(rows[0]), "| " + Array(w).fill("---").join(" | ") + " |", ...rows.slice(1).map(line)].join("\n") + "\n";
+    return [line(rows[0]), "|" + Array(w).fill(" --- ").join("|") + "|", ...rows.slice(1).map(line)].join("\n") + "\n";
   }
-  const xmlName = (k) => { let n = String(k).replace(/[^A-Za-z0-9_.-]/g, "_"); if (!/^[A-Za-z_]/.test(n)) n = "_" + n; return n; };
+  const xmlName = (k) => { let n = String(k).trim().replace(/[^A-Za-z0-9_.\-À-ɏ]/g, "_"); if (!/^[A-Za-z_À-ɏ]/.test(n)) n = "_" + n; return n || "_"; };
   function objToXml(v, name, depth) {
     const pad = "  ".repeat(depth);
     const tag = xmlName(name);
     if (Array.isArray(v)) return v.map((x) => objToXml(x, name, depth)).join("");
     if (v && typeof v === "object") {
-      const inner = Object.keys(v).map((k) => objToXml(v[k], k, depth + 1)).join("");
-      return `${pad}<${tag}>\n${inner}${pad}</${tag}>\n`;
+      const attrs = Object.keys(v).filter((k) => k.startsWith("@")).map((k) => ` ${xmlName(k.slice(1))}="${esc(v[k])}"`).join("");
+      const keys = Object.keys(v).filter((k) => !k.startsWith("@") && k !== "#text");
+      const text = v["#text"] != null ? esc(v["#text"]) : "";
+      if (!keys.length) return `${pad}<${tag}${attrs}>${text}</${tag}>\n`;
+      return `${pad}<${tag}${attrs}>\n${text ? pad + "  " + text + "\n" : ""}${keys.map((k) => objToXml(v[k], k, depth + 1)).join("")}${pad}</${tag}>\n`;
     }
     return `${pad}<${tag}>${esc(v == null ? "" : v)}</${tag}>\n`;
   }
   function toXml(v, root) {
-    const body = Array.isArray(v) ? v.map((x) => objToXml(x, "item", 1)).join("") : v && typeof v === "object" ? Object.keys(v).map((k) => objToXml(v[k], k, 1)).join("") : objToXml(v, "value", 1);
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      const keys = Object.keys(v);
+      if (keys.length === 1 && v[keys[0]] && typeof v[keys[0]] === "object" && !Array.isArray(v[keys[0]])) return `<?xml version="1.0" encoding="UTF-8"?>\n${objToXml(v[keys[0]], keys[0], 0)}`;
+      return `<?xml version="1.0" encoding="UTF-8"?>\n${objToXml(v, root, 0)}`;
+    }
+    const body = Array.isArray(v) ? v.map((x) => objToXml(x, "item", 1)).join("") : objToXml(v, "value", 1);
     return `<?xml version="1.0" encoding="UTF-8"?>\n<${root}>\n${body}</${root}>\n`;
   }
   function xmlToObj(node) {
@@ -179,35 +478,198 @@
     return { [doc.documentElement.tagName]: xmlToObj(doc.documentElement) };
   }
   function flatRows(data) {
-    let arr = Array.isArray(data) ? data : data && typeof data === "object" ? (Object.values(data).find(Array.isArray) || [data]) : [{ valeur: data }];
+    const arr = Array.isArray(data) ? data : data && typeof data === "object" ? (Object.values(data).find(Array.isArray) || [data]) : [{ valeur: data }];
     return arr.map((r) => {
       if (r === null || typeof r !== "object") return { valeur: r };
       const o = {};
-      for (const k in r) o[k] = r[k] !== null && typeof r[k] === "object" ? JSON.stringify(r[k]) : r[k];
+      const walk = (obj, pre) => {
+        for (const k in obj) {
+          const v = obj[k], key = pre ? pre + "." + k : k;
+          if (v && typeof v === "object" && !Array.isArray(v)) walk(v, key);
+          else o[key] = Array.isArray(v) ? (v.every((x) => x === null || typeof x !== "object") ? v.join(", ") : JSON.stringify(v)) : v;
+        }
+      };
+      walk(r, "");
       return o;
     });
   }
 
-  // ---------- Images ----------
-  async function loadImage(file) {
-    const url = URL.createObjectURL(file);
-    try {
-      const img = new Image();
-      img.decoding = "async";
-      img.src = url;
-      await img.decode();
-      let w = img.naturalWidth || 512, h = img.naturalHeight || 512;
-      return { img, w, h, url };
-    } catch (e) {
-      URL.revokeObjectURL(url);
-      throw new Error("Image illisible par ce navigateur.");
+  // CSV : détection du séparateur, guillemets, zéros en tête et décimales françaises conservés
+  function detectDelim(text) {
+    const lines = text.slice(0, 50000).split(/\r?\n/).filter((l) => l.trim()).slice(0, 30);
+    let best = ",", bestScore = -1;
+    for (const d of [",", ";", "\t", "|"]) {
+      const counts = lines.map((l) => { let n = 0, q = false; for (const ch of l) { if (ch === '"') q = !q; else if (ch === d && !q) n++; } return n; });
+      if (!counts.length || !counts[0]) continue;
+      const same = counts.filter((c) => c === counts[0]).length / counts.length;
+      const score = same * 10 + Math.min(counts[0], 50) / 50;
+      if (score > bestScore) { bestScore = score; best = d; }
     }
+    return best;
+  }
+  function parseCSV(text, d) {
+    const rows = [];
+    let row = [], cell = "", q = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (q) {
+        if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+        else cell += ch;
+      } else if (ch === '"' && cell === "") q = true;
+      else if (ch === d) { row.push(cell); cell = ""; }
+      else if (ch === "\n" || ch === "\r") {
+        if (ch === "\r" && text[i + 1] === "\n") i++;
+        row.push(cell); rows.push(row); row = []; cell = "";
+      } else cell += ch;
+    }
+    if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+    return rows;
+  }
+  function typedCell(v, decComma) {
+    const s = v.trim();
+    if (!s) return v;
+    if (/^[-+]?0\d/.test(s) || /^\+/.test(s) || /^\d{16,}$/.test(s)) return v; // codes, téléphones, identifiants
+    let n = s;
+    if (decComma) {
+      if (/^-?\d{1,3}([   ]\d{3})+(,\d+)?$/.test(n)) n = n.replace(/[   ]/g, "");
+      if (/^-?\d+,\d+$/.test(n)) n = n.replace(",", ".");
+    }
+    if (/^-?\d+(\.\d+)?$/.test(n) && n.replace(/[-.]/g, "").length <= 15) return Number(n);
+    return v;
+  }
+  function autoWidth(ws, aoa) {
+    const w = [];
+    for (const r of aoa) r.forEach((v, i) => { const l = String(v == null ? "" : v).split("\n").reduce((m, x) => Math.max(m, x.length), 0); w[i] = Math.max(w[i] || 6, Math.min(60, l + 2)); });
+    ws["!cols"] = w.map((wch) => ({ wch }));
+  }
+  function csvToWorkbook(X, text, delim) {
+    text = text.replace(/^﻿/, "");
+    const sep = /^sep=(.)\r?\n/i.exec(text);
+    if (sep) { delim = sep[1]; text = text.slice(sep[0].length); }
+    delim = delim || detectDelim(text);
+    const raw = parseCSV(text, delim);
+    while (raw.length && raw[raw.length - 1].every((c) => !c.trim())) raw.pop();
+    // Une colonne qui contient un code à zéro initial (code postal, référence) reste entièrement en texte
+    const textCols = new Set();
+    raw.slice(1).forEach((r) => r.forEach((c, i) => { if (/^\s*[-+]?0\d/.test(c) || /^\s*\+/.test(c)) textCols.add(i); }));
+    const aoa = raw.map((r, ri) => r.map((c, i) => (ri === 0 || textCols.has(i) ? c : typedCell(c, delim !== ","))));
+    const ws = X.utils.aoa_to_sheet(aoa);
+    autoWidth(ws, aoa);
+    const wb = X.utils.book_new();
+    X.utils.book_append_sheet(wb, ws, "Feuille1");
+    return wb;
+  }
+  // Valeur d'une cellule telle qu'affichée (dates, pourcentages) ou typée (nombres, booléens)
+  function cellVal(X, c) {
+    if (!c) return "";
+    if (c.t === "n") return c.z && X.SSF.is_date(c.z) ? (c.w || String(c.v)) : c.v;
+    if (c.t === "b") return c.v;
+    if (c.t === "d") return c.w || (c.v instanceof Date ? c.v.toISOString().slice(0, 10) : String(c.v));
+    if (c.t === "e") return c.w || "#ERREUR";
+    return c.w != null ? c.w : c.v == null ? "" : String(c.v);
+  }
+  function sheetAoa(X, ws) {
+    if (!ws || !ws["!ref"]) return [];
+    const r = X.utils.decode_range(ws["!ref"]);
+    const out = [];
+    for (let R = r.s.r; R <= r.e.r; R++) {
+      const row = [];
+      for (let C = r.s.c; C <= r.e.c; C++) row.push(cellVal(X, ws[X.utils.encode_cell({ r: R, c: C })]));
+      out.push(row);
+    }
+    while (out.length && out[out.length - 1].every((v) => v === "")) out.pop();
+    return out;
+  }
+  function aoaToObjects(aoa) {
+    if (!aoa.length) return [];
+    const seen = {};
+    const head = aoa[0].map((h, i) => { let k = String(h).trim() || "colonne_" + (i + 1); if (seen[k]) k += "_" + ++seen[k]; else seen[k] = 1; return k; });
+    return aoa.slice(1).filter((r) => r.some((v) => v !== "")).map((r) => Object.fromEntries(head.map((k, i) => [k, r[i] === undefined ? "" : r[i]])));
+  }
+  function sheetsHtml(X, wb) {
+    const names = wb.SheetNames.filter((n) => wb.Sheets[n] && wb.Sheets[n]["!ref"]);
+    return names.map((n) => {
+      const t = X.utils.sheet_to_html(wb.Sheets[n], { header: "", footer: "" }).replace(/^[\s\S]*?<table/i, "<table").replace(/<\/table>[\s\S]*$/i, "</table>");
+      return (names.length > 1 ? `<h2>${esc(n)}</h2>\n` : "") + t;
+    }).join("\n");
+  }
+  async function sheetOut(X, wb, to, base) {
+    const one = (data, ext) => [{ name: `${base}.${ext}`, blob: blobOf(data, ext) }];
+    const names = wb.SheetNames.filter((n) => wb.Sheets[n] && wb.Sheets[n]["!ref"]);
+    if (!names.length) throw new Error("Le classeur est vide.");
+    const multi = names.length > 1;
+    const safe = (n) => n.replace(/[\\/:*?"<>|]+/g, "-").trim() || "feuille";
+    switch (to) {
+      case "xlsx": return one(X.write(wb, { bookType: "xlsx", type: "array", cellStyles: true, compression: true }), "xlsx");
+      case "ods": return one(X.write(wb, { bookType: "ods", type: "array", cellStyles: true }), "ods");
+      case "csv":
+      case "tsv":
+        return names.map((n) => ({
+          name: multi ? `${base} - ${safe(n)}.${to}` : `${base}.${to}`,
+          blob: blobOf("﻿" + X.utils.sheet_to_csv(wb.Sheets[n], { FS: to === "tsv" ? "\t" : ",", blankrows: true }).replace(/\n+$/, "") + "\n", to),
+        }));
+      case "json": {
+        const data = multi ? Object.fromEntries(names.map((n) => [n, aoaToObjects(sheetAoa(X, wb.Sheets[n]))])) : aoaToObjects(sheetAoa(X, wb.Sheets[names[0]]));
+        return one(JSON.stringify(data, null, 2) + "\n", "json");
+      }
+      case "md": return one(names.map((n) => (multi ? `## ${n}\n\n` : "") + rowsToMd(sheetAoa(X, wb.Sheets[n]))).join("\n"), "md");
+      case "xml": {
+        const sheetXml = (n, d) => aoaToObjects(sheetAoa(X, wb.Sheets[n])).map((r) => objToXml(Object.fromEntries(Object.entries(r).map(([k, v]) => [xmlName(k), v])), "row", d)).join("");
+        const body = multi ? names.map((n) => `  <sheet name="${esc(n)}">\n${sheetXml(n, 2)}  </sheet>\n`).join("") : sheetXml(names[0], 1);
+        return one(`<?xml version="1.0" encoding="UTF-8"?>\n<${multi ? "workbook" : "rows"}>\n${body}</${multi ? "workbook" : "rows"}>\n`, "xml");
+      }
+      case "html": return one(htmlDoc(base, sheetsHtml(X, wb), SHEET_CSS.replace("html{background:#fff}", "html{background:#fff}body{overflow-x:auto}")), "html");
+      case "pdf": return one(await flowToPdf(htmlDoc(base, sheetsHtml(X, wb), SHEET_CSS), base), "pdf");
+    }
+    throw new Error("Conversion non disponible.");
+  }
+
+  // ---------- Images ----------
+  const SVG_UNITS = { px: 1, pt: 96 / 72, pc: 16, mm: 96 / 25.4, cm: 96 / 2.54, in: 96 };
+  const svgLen = (v) => { const m = /^\s*([\d.]+)\s*(px|pt|pc|mm|cm|in)?\s*$/i.exec(v || ""); return m ? parseFloat(m[1]) * SVG_UNITS[(m[2] || "px").toLowerCase()] : 0; };
+  function imgFromUrl(url) {
+    return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error("Image illisible par ce navigateur.")); i.src = url; });
+  }
+  async function loadSvg(file) {
+    const doc = new DOMParser().parseFromString(await file.text(), "image/svg+xml");
+    const svg = doc.documentElement;
+    if (!svg || svg.nodeName.toLowerCase() !== "svg") throw new Error("SVG invalide.");
+    const aw = svg.getAttribute("width"), ah = svg.getAttribute("height");
+    let w = svgLen(aw), h = svgLen(ah);
+    const vb = (svg.getAttribute("viewBox") || "").trim().split(/[\s,]+/).map(Number);
+    const hasVb = vb.length === 4 && vb[2] > 0 && vb[3] > 0;
+    if (hasVb) { if (w && !h) h = w * vb[3] / vb[2]; else if (h && !w) w = h * vb[2] / vb[3]; else if (!w && !h) { w = vb[2]; h = vb[3]; } }
+    if (!w || !h) { w = w || 512; h = h || 512; }
+    if (!hasVb) svg.setAttribute("viewBox", `0 0 ${parseFloat(aw) || w} ${parseFloat(ah) || h}`);
+    // Un SVG est vectoriel : on le rend net (au moins 2×, et 1024 px sur le grand côté)
+    const k = Math.min(Math.max(2, 1024 / Math.max(w, h)), 4096 / Math.max(w, h));
+    const W = Math.round(w * k), H = Math.round(h * k);
+    svg.setAttribute("width", W); svg.setAttribute("height", H);
+    if (!svg.getAttribute("preserveAspectRatio")) svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(svg)], { type: "image/svg+xml" }));
+    try { return { src: await imgFromUrl(url), w: W, h: H, alpha: true, done: () => URL.revokeObjectURL(url) }; }
+    catch (e) { URL.revokeObjectURL(url); throw e; }
+  }
+  async function loadVisual(file) {
+    const e = extOf(file.name);
+    if (e === "svg" || file.type === "image/svg+xml") return loadSvg(file);
+    const alpha = !/^(jpe?g|bmp)$/.test(e);
+    if (window.createImageBitmap && e !== "ico") {
+      try {
+        const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
+        return { src: bmp, w: bmp.width, h: bmp.height, alpha, done: () => bmp.close && bmp.close() };
+      } catch (err) { /* repli ci-dessous */ }
+    }
+    const url = URL.createObjectURL(file);
+    try { const img = await imgFromUrl(url); return { src: img, w: img.naturalWidth, h: img.naturalHeight, alpha, done: () => URL.revokeObjectURL(url) }; }
+    catch (err) { URL.revokeObjectURL(url); throw err; }
   }
   function drawToCanvas(src, w, h, maxW, background) {
     if (maxW && w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
     const c = document.createElement("canvas");
     c.width = Math.max(1, w); c.height = Math.max(1, h);
     const ctx = c.getContext("2d");
+    ctx.imageSmoothingQuality = "high";
     if (background) { ctx.fillStyle = background; ctx.fillRect(0, 0, c.width, c.height); }
     ctx.drawImage(src, 0, 0, c.width, c.height);
     return c;
@@ -229,40 +691,87 @@
     }
     return new Blob([buf], { type: MIME.bmp });
   }
+  // ICO multi-tailles (16 → 256) : l'icône reste nette partout, proportions conservées
   async function canvasToIco(src, w, h) {
-    const s = Math.min(256, Math.max(w, h));
-    const c = document.createElement("canvas");
-    c.width = c.height = s;
-    const k = s / Math.max(w, h), dw = Math.round(w * k), dh = Math.round(h * k);
-    c.getContext("2d").drawImage(src, (s - dw) / 2, (s - dh) / 2, dw, dh);
-    const png = new Uint8Array(await (await canvasBlob(c, "image/png")).arrayBuffer());
-    const head = new ArrayBuffer(22), v = new DataView(head);
-    v.setUint16(2, 1, true); v.setUint16(4, 1, true);
-    v.setUint8(6, s === 256 ? 0 : s); v.setUint8(7, s === 256 ? 0 : s);
-    v.setUint16(10, 1, true); v.setUint16(12, 32, true);
-    v.setUint32(14, png.length, true); v.setUint32(18, 22, true);
-    return new Blob([head, png], { type: MIME.ico });
+    const sizes = [16, 32, 48, 64, 128, 256].filter((s) => s <= Math.max(16, Math.max(w, h)));
+    const pngs = [];
+    for (const s of sizes) {
+      const c = document.createElement("canvas");
+      c.width = c.height = s;
+      const ctx = c.getContext("2d");
+      ctx.imageSmoothingQuality = "high";
+      const k = s / Math.max(w, h), dw = Math.round(w * k), dh = Math.round(h * k);
+      ctx.drawImage(src, Math.round((s - dw) / 2), Math.round((s - dh) / 2), dw, dh);
+      pngs.push(new Uint8Array(await (await canvasBlob(c, "image/png")).arrayBuffer()));
+    }
+    const head = new ArrayBuffer(6 + 16 * sizes.length), v = new DataView(head);
+    v.setUint16(2, 1, true); v.setUint16(4, sizes.length, true);
+    let off = head.byteLength;
+    sizes.forEach((s, i) => {
+      const o = 6 + 16 * i;
+      v.setUint8(o, s === 256 ? 0 : s); v.setUint8(o + 1, s === 256 ? 0 : s);
+      v.setUint16(o + 4, 1, true); v.setUint16(o + 6, 32, true);
+      v.setUint32(o + 8, pngs[i].length, true); v.setUint32(o + 12, off, true);
+      off += pngs[i].length;
+    });
+    return new Blob([head, ...pngs], { type: MIME.ico });
   }
-  async function convertCanvasSource(src, w, h, to, o, title) {
+  async function convertVisual(vis, to, o, title) {
+    const { src, w, h, alpha } = vis;
     if (to === "ico") return canvasToIco(src, w, h);
-    const opaque = to === "jpg" || to === "bmp" || to === "pdf";
+    const opaque = to === "jpg" || to === "bmp" || (to === "pdf" && !alpha);
     const c = drawToCanvas(src, w, h, o.maxW, opaque ? "#ffffff" : null);
     if (to === "png") return canvasBlob(c, "image/png");
     if (to === "jpg") return canvasBlob(c, "image/jpeg", o.quality);
     if (to === "webp") {
       const b = await canvasBlob(c, "image/webp", o.quality);
-      if (b.type !== "image/webp") throw new Error("Ce navigateur ne sait pas encoder le WEBP.");
+      if (b.type !== "image/webp") throw new Error("Ce navigateur ne sait pas encoder le WEBP. Essayez avec Chrome ou Firefox.");
       return b;
     }
     if (to === "bmp") return canvasToBmp(c);
     if (to === "pdf") {
-      const { jsPDF } = await lib("jspdf");
-      const doc = new jsPDF({ unit: "px", format: [c.width, c.height], orientation: c.width > c.height ? "l" : "p", hotfixes: ["px_scaling"] });
-      doc.setProperties({ title: title || "" });
-      doc.addImage(c.toDataURL("image/jpeg", Math.max(o.quality, 0.85)), "JPEG", 0, 0, c.width, c.height);
-      return doc.output("blob");
+      // Page aux dimensions exactes de l'image ; transparence conservée en PNG, sinon JPEG haute qualité
+      const pdf = await newPdf(c.width, c.height, title);
+      if (alpha) pdf.addImage(c, "PNG", 0, 0, c.width, c.height, undefined, "FAST");
+      else pdf.addImage(c.toDataURL("image/jpeg", Math.max(o.quality, 0.92)), "JPEG", 0, 0, c.width, c.height);
+      return pdf.output("blob");
     }
     throw new Error("Sortie inconnue");
+  }
+
+  // ---------- PDF → texte : colonnes et retraits conservés ----------
+  function layoutText(items) {
+    const its = items.filter((i) => i.str && i.str.trim() !== "" || (i.str && i.str.length > 1))
+      .map((i) => ({ s: i.str, x: i.transform[4], y: i.transform[5], w: i.width, h: Math.abs(i.transform[3]) || i.height || 10 }));
+    if (!its.length) return "";
+    const widths = its.filter((i) => i.s.length > 2 && i.w > 0).map((i) => i.w / i.s.length).sort((a, b) => a - b);
+    const cw = widths.length ? widths[Math.floor(widths.length / 2)] : 5;
+    its.sort((a, b) => b.y - a.y || a.x - b.x);
+    const lines = [];
+    for (const it of its) {
+      const L = lines[lines.length - 1];
+      if (L && Math.abs(L.y - it.y) < Math.max(2, Math.min(L.h, it.h) * 0.45)) L.items.push(it);
+      else lines.push({ y: it.y, h: it.h, items: [it] });
+    }
+    const minX = Math.min(...its.map((i) => i.x));
+    const gaps = [];
+    for (let i = 1; i < lines.length; i++) gaps.push(lines[i - 1].y - lines[i].y);
+    const lh = gaps.length ? gaps.slice().sort((a, b) => a - b)[Math.floor(gaps.length / 2)] : 12;
+    let out = "";
+    lines.forEach((L, i) => {
+      if (i > 0 && lines[i - 1].y - L.y > lh * 1.6) out += "\n";
+      L.items.sort((a, b) => a.x - b.x);
+      let t = "", end = null;
+      for (const it of L.items) {
+        const col = Math.round((it.x - minX) / cw);
+        if (col > t.length + 1) t += " ".repeat(col - t.length);
+        else if (end != null && it.x - end > cw * 0.25 && !t.endsWith(" ") && !it.s.startsWith(" ")) t += " ";
+        t += it.s;
+        end = it.x + it.w;
+      }
+      out += t.replace(/\s+$/, "") + "\n";
+    });
+    return out;
   }
 
   // ---------- Audio / vidéo ----------
@@ -285,24 +794,42 @@
   async function toWav(file) {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) throw new Error("Audio non pris en charge par ce navigateur.");
-    const ctx = new AC();
-    try {
-      const ab = await ctx.decodeAudioData(await file.arrayBuffer());
-      return audioBufferToWav(ab);
-    } catch (e) {
-      throw new Error("Piste audio illisible par ce navigateur.");
-    } finally { ctx.close && ctx.close(); }
+    // Décodage à la fréquence d'origine (sinon le navigateur rééchantillonne, souvent à 48 kHz)
+    const buf = await file.arrayBuffer();
+    const rate = sniffSampleRate(new Uint8Array(buf));
+    let ctx;
+    try { ctx = rate >= 8000 && rate <= 192000 ? new AC({ sampleRate: rate }) : new AC(); } catch (e) { ctx = new AC(); }
+    try { return audioBufferToWav(await ctx.decodeAudioData(buf)); }
+    catch (e) { throw new Error("Piste audio illisible par ce navigateur."); }
+    finally { ctx.close && ctx.close(); }
+  }
+  // Fréquence d'origine pour WAV, MP3, FLAC et OGG (les plus courants)
+  function sniffSampleRate(b) {
+    const s = (o, n) => String.fromCharCode(...b.subarray(o, o + n));
+    if (s(0, 4) === "RIFF" && s(8, 4) === "WAVE") return b[24] | b[25] << 8 | b[26] << 16 | b[27] << 24;
+    if (s(0, 4) === "fLaC") return (b[18] << 12 | b[19] << 4 | b[20] >> 4) >>> 0;
+    if (s(0, 4) === "OggS") { const i = s(0, 200).indexOf("vorbis"); if (i > 0) return b[i + 11] | b[i + 12] << 8 | b[i + 13] << 16 | b[i + 14] << 24; if (s(0, 200).indexOf("OpusHead") > 0) return 48000; }
+    let o = 0;
+    if (s(0, 3) === "ID3") o = 10 + ((b[6] & 127) << 21 | (b[7] & 127) << 14 | (b[8] & 127) << 7 | (b[9] & 127));
+    for (let i = o; i < Math.min(b.length - 4, o + 8192); i++) {
+      if (b[i] === 0xff && (b[i + 1] & 0xe0) === 0xe0) {
+        const ver = (b[i + 1] >> 3) & 3, idx = (b[i + 2] >> 2) & 3;
+        if (idx === 3 || ver === 1) continue;
+        return [[11025, 12000, 8000], null, [22050, 24000, 16000], [44100, 48000, 32000]][ver][idx];
+      }
+    }
+    return 0;
   }
   function videoFrame(file) {
     return new Promise((resolve, reject) => {
       const v = document.createElement("video");
       const url = URL.createObjectURL(file);
       v.muted = true; v.playsInline = true; v.preload = "auto"; v.src = url;
-      const fail = () => { URL.revokeObjectURL(url); reject(new Error("Vidéo illisible par ce navigateur.")); };
+      const t = setTimeout(() => fail(), 20000);
+      const fail = () => { clearTimeout(t); URL.revokeObjectURL(url); reject(new Error("Vidéo illisible par ce navigateur.")); };
       v.onerror = fail;
       v.onloadedmetadata = () => { v.currentTime = Math.min(1, (v.duration || 0) / 2); };
-      v.onseeked = () => resolve({ v, w: v.videoWidth, h: v.videoHeight, url });
-      setTimeout(fail, 20000);
+      v.onseeked = () => { clearTimeout(t); resolve({ src: v, w: v.videoWidth, h: v.videoHeight, alpha: false, done: () => URL.revokeObjectURL(url) }); };
     });
   }
 
@@ -322,16 +849,12 @@
     if (!g) throw new Error("Type de fichier non reconnu.");
 
     switch (g.id) {
-      case "image": {
-        const { img, w, h, url } = await loadImage(file);
-        try { return one(await convertCanvasSource(img, w, h, to, o, base), to); }
-        finally { URL.revokeObjectURL(url); }
-      }
+      case "image":
       case "video": {
         if (to === "wav") return one(await toWav(file), "wav");
-        const { v, w, h, url } = await videoFrame(file);
-        try { return one(await convertCanvasSource(v, w, h, to, o, base), to); }
-        finally { URL.revokeObjectURL(url); }
+        const vis = g.id === "video" ? await videoFrame(file) : await loadVisual(file);
+        try { return one(await convertVisual(vis, to, o, base), to); }
+        finally { vis.done && vis.done(); }
       }
       case "audio":
         return one(await toWav(file), "wav");
@@ -340,60 +863,67 @@
         const X = await lib("xlsx");
         const e = extOf(file.name);
         const wb = e === "csv" || e === "tsv"
-          ? X.read(await file.text(), { type: "string", FS: e === "tsv" ? "\t" : undefined, raw: false })
-          : X.read(await file.arrayBuffer(), { type: "array", cellDates: true });
+          ? csvToWorkbook(X, await file.text(), e === "tsv" ? "\t" : null)
+          : X.read(await file.arrayBuffer(), { type: "array", cellDates: true, cellNF: true, cellStyles: true });
         return sheetOut(X, wb, to, base);
       }
       case "json":
       case "yaml":
       case "xml": {
-        const text = await file.text();
+        const text = (await file.text()).replace(/^﻿/, "");
         let data;
         if (g.id === "json") { try { data = JSON.parse(text); } catch (err) { throw new Error("JSON invalide : " + err.message); } }
-        else if (g.id === "yaml") data = (await lib("yaml")).load(text);
+        else if (g.id === "yaml") { try { data = (await lib("yaml")).load(text); } catch (err) { throw new Error("YAML invalide : " + err.message.split("\n")[0]); } }
         else data = parseXml(text);
         if (to === "json") return one(JSON.stringify(data, null, 2) + "\n", "json");
-        if (to === "yaml") return one((await lib("yaml")).dump(data, { lineWidth: 120 }), "yaml");
+        if (to === "yaml") return one((await lib("yaml")).dump(data, { lineWidth: -1, noRefs: true }), "yaml");
         if (to === "xml") return one(toXml(data, "root"), "xml");
         const X = await lib("xlsx");
-        const ws = X.utils.json_to_sheet(flatRows(data));
+        const rows = flatRows(data);
+        const ws = X.utils.json_to_sheet(rows);
+        autoWidth(ws, [Object.keys(rows[0] || {}), ...rows.map(Object.values)]);
         const wb = X.utils.book_new();
         X.utils.book_append_sheet(wb, ws, "Données");
         return sheetOut(X, wb, to, base);
       }
 
       case "markdown": {
-        const md = await file.text();
-        const html = (await lib("marked")).parse(md);
-        if (to === "html") return one(htmlDoc(base, html), "html");
+        const md = (await file.text()).replace(/^﻿/, "");
+        const M = await lib("marked");
+        const html = htmlDoc(base, M.parse(md, { gfm: true, breaks: false }));
+        if (to === "html") return one(html, "html");
         if (to === "txt") return one(htmlToText(html), "txt");
-        if (to === "pdf") return one(await textToPdf(htmlToText(html), base), "pdf");
+        if (to === "pdf") return one(await flowToPdf(html, base), "pdf");
         break;
       }
       case "html": {
         const html = await file.text();
         if (to === "md") return one(await htmlToMd(html), "md");
         if (to === "txt") return one(htmlToText(html), "txt");
-        if (to === "pdf") return one(await textToPdf(htmlToText(html), base), "pdf");
+        if (to === "pdf") {
+          // Une page sans fond ni largeur prévue pour l'écran reçoit des marges blanches lisibles
+          const page = /<html[\s>]/i.test(html) ? html : htmlDoc(base, html);
+          return one(await flowToPdf(page.replace(/<head([^>]*)>/i, `<head$1><style>html{background:#fff}</style>`), base), "pdf");
+        }
         break;
       }
       case "text": {
-        const txt = await file.text();
-        if (to === "pdf") return one(await textToPdf(txt, base), "pdf");
-        if (to === "html") return one(htmlDoc(base, `<pre>${esc(txt)}</pre>`), "html");
+        const txt = (await file.text()).replace(/^﻿/, "");
+        const html = htmlDoc(base, `<pre>${esc(txt)}</pre>`, TEXT_CSS);
+        if (to === "pdf") return one(await flowToPdf(html, base), "pdf");
+        if (to === "html") return one(html, "html");
         if (to === "md") return one(txt, "md");
         break;
       }
       case "docx": {
-        const M = await lib("mammoth");
         const buf = await file.arrayBuffer();
-        if (to === "txt" || to === "pdf") {
-          const { value } = await M.extractRawText({ arrayBuffer: buf });
-          return to === "txt" ? one(value, "txt") : one(await textToPdf(value, base), "pdf");
-        }
-        const { value: html } = await M.convertToHtml({ arrayBuffer: buf });
-        if (to === "html") return one(htmlDoc(base, html), "html");
-        if (to === "md") return one(await htmlToMd(html), "md");
+        if (to === "pdf") return one(await docxToPdf(buf, base), "pdf");
+        if (to === "html") return one(await docxToHtml(buf, base), "html");
+        const M = await lib("mammoth");
+        const mopts = { styleMap: ["p[style-name='Title'] => h1:fresh", "p[style-name='Titre'] => h1:fresh", "p[style-name='Subtitle'] => h2:fresh", "p[style-name='Sous-titre'] => h2:fresh"] };
+        const mhtml = async () => (await M.convertToHtml({ arrayBuffer: buf }, mopts)).value;
+        if (to === "txt") return one(htmlToText(await mhtml()), "txt");
+        if (to === "md") return one(await htmlToMd(await mhtml()), "md");
         break;
       }
       case "pdf": {
@@ -401,14 +931,10 @@
         const pdf = await P.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
         try {
           if (to === "txt") {
-            let out = "";
-            for (let i = 1; i <= pdf.numPages; i++) {
-              const page = await pdf.getPage(i);
-              const tc = await page.getTextContent();
-              let line = "";
-              for (const it of tc.items) { line += it.str + (it.hasEOL ? "\n" : ""); }
-              out += line.trim() + (i < pdf.numPages ? "\n\n" : "\n");
-            }
+            const pages = [];
+            for (let i = 1; i <= pdf.numPages; i++) pages.push(layoutText((await (await pdf.getPage(i)).getTextContent()).items));
+            const out = pages.join("\n\f\n").replace(/\n{3,}/g, "\n\n");
+            if (!out.trim()) throw new Error("Ce PDF ne contient pas de texte (document scanné).");
             return one(out, "txt");
           }
           const files = [];
@@ -420,30 +946,15 @@
             c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
             const ctx = c.getContext("2d");
             ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
-            await page.render({ canvasContext: ctx, viewport: vp }).promise;
-            const b = await canvasBlob(c, to === "png" ? "image/png" : "image/jpeg", o.quality);
+            await page.render({ canvasContext: ctx, viewport: vp, annotationMode: P.AnnotationMode ? P.AnnotationMode.ENABLE_FORMS : undefined }).promise;
+            const b = await canvasBlob(c, to === "png" ? "image/png" : "image/jpeg", Math.max(o.quality, 0.9));
             const name = pdf.numPages === 1 ? `${base}.${to}` : `${base}-page-${String(i).padStart(pad, "0")}.${to}`;
             files.push({ name, blob: b });
+            page.cleanup();
           }
           return files;
         } finally { pdf.destroy(); }
       }
-    }
-    throw new Error("Conversion non disponible.");
-  }
-
-  function sheetOut(X, wb, to, base) {
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const one = (data, ext) => [{ name: `${base}.${ext}`, blob: blobOf(data, ext) }];
-    switch (to) {
-      case "xlsx": return one(X.write(wb, { bookType: "xlsx", type: "array" }), "xlsx");
-      case "ods": return one(X.write(wb, { bookType: "ods", type: "array" }), "ods");
-      case "csv": return one("﻿" + X.utils.sheet_to_csv(ws), "csv");
-      case "tsv": return one("﻿" + X.utils.sheet_to_csv(ws, { FS: "\t" }), "tsv");
-      case "json": return one(JSON.stringify(X.utils.sheet_to_json(ws, { defval: "" }), null, 2) + "\n", "json");
-      case "html": return one(htmlDoc(base, X.utils.sheet_to_html(ws, { header: "", footer: "" }).replace(/^[\s\S]*?<body>|<\/body>[\s\S]*$/g, "")), "html");
-      case "md": return one(rowsToMd(X.utils.sheet_to_json(ws, { header: 1, defval: "" })), "md");
-      case "xml": return one(toXml(X.utils.sheet_to_json(ws, { defval: "" }).map((r) => { const o = {}; for (const k in r) o[xmlName(k)] = r[k]; return o; }), "rows").replace(/<item>/g, "<row>").replace(/<\/item>/g, "</row>"), "xml");
     }
     throw new Error("Conversion non disponible.");
   }
