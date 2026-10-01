@@ -1,5 +1,5 @@
 /* Service worker de Mue : fonctionnement hors connexion + réception de fichiers partagés. */
-const VERSION = "mue-v2";
+const VERSION = "mue-v3";
 const SHELL = [
   "./",
   "./index.html",
@@ -21,6 +21,9 @@ const LIBS = [
   "https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js",
   "https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js",
   "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js",
+  "https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js",
+  "https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js",
+  "https://cdn.jsdelivr.net/npm/turndown-plugin-gfm@1.0.2/dist/turndown-plugin-gfm.js",
 ];
 
 self.addEventListener("install", (e) => {
